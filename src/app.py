@@ -4,6 +4,10 @@ import time
 import psycopg
 
 
+def get_message():
+    return "DevOps app is running"
+
+
 def check_database():
     with psycopg.connect(
         host=os.getenv("DB_HOST", "db"),
@@ -22,7 +26,7 @@ def run():
         print("Database connection OK", flush=True)
 
     while True:
-        print("DevOps app is running", flush=True)
+        print(get_message(), flush=True)
         time.sleep(5)
 
 
