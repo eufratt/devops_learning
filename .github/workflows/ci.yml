@@ -14,5 +14,5 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check Python syntax
-        run: python3 -m py_compile src/app.py
+      - name: Run tests
+        run: python3 -m unittest discover -s tests -v
