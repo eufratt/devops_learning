@@ -77,7 +77,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           cd /home/torasic/deploy/devops
-          docker compose pull app
+          docker compose pull app && \
           docker compose up -d --wait --wait-timeout 60
           docker compose ps
 

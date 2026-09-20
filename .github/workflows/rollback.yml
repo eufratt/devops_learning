@@ -1,0 +1,40 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Git commit SHA untuk rollback"
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    runs-on: [self-hosted, Linux, X64]
+    environment: staging
+
+    permissions:
+      packages: read
+
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Roll back
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          cd /home/torasic/deploy/devops
+
+          docker compose pull app && \
+          docker compose up -d --wait --wait-timeout 60
+
+          echo "Running image:"
+          docker inspect devops-prod-app --format '{{.Config.Image}}'
+
+          echo "Health:"
+          docker inspect devops-prod-app --format '{{.State.Health.Status}}'
