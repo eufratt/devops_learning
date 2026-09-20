@@ -2,11 +2,6 @@ name: Rollback
 
 on:
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: "Git commit SHA untuk rollback"
-        required: true
-        type: string
 
 jobs:
   rollback:
@@ -24,14 +19,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Read last known good version
+        id: version
+        run: |
+          cd /home/torasic/deploy/devops
+          IMAGE_TAG=$(cat last-known-good.txt)
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "Rolling back to $IMAGE_TAG"
+
       - name: Roll back
-        env:
-          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           cd /home/torasic/deploy/devops
 
           docker compose pull app && \
           docker compose up -d --wait --wait-timeout 60
+
+      - name: Verify rollback
+        run: |
+          cd /home/torasic/deploy/devops
 
           echo "Running image:"
           docker inspect devops-prod-app --format '{{.Config.Image}}'

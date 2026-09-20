@@ -79,6 +79,11 @@ jobs:
           cd /home/torasic/deploy/devops
           docker compose pull app && \
           docker compose up -d --wait --wait-timeout 60
+          echo "Deployment healthy"
+          printf '%s\n' "$IMAGE_TAG" > last-known-good.txt
+
+          echo "Last known good:"
+          cat last-known-good.txt
           docker compose ps
 
       - name: Show application logs
