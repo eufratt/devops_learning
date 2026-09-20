@@ -72,19 +72,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deploy to staging
+      - name: Deploy with automatic rollback
         env:
           IMAGE_TAG: ${{ github.sha }}
+        shell: bash
         run: |
           cd /home/torasic/deploy/devops
-          docker compose pull app && \
-          docker compose up -d --wait --wait-timeout 60
-          echo "Deployment healthy"
-          printf '%s\n' "$IMAGE_TAG" > last-known-good.txt
 
-          echo "Last known good:"
-          cat last-known-good.txt
-          docker compose ps
+          PREVIOUS_SHA=$(cat last-known-good.txt)
+
+          echo "Previous known-good: $PREVIOUS_SHA"
+          echo "Deploying: $IMAGE_TAG"
+
+          if docker compose pull app && \
+             docker compose up -d --wait --wait-timeout 60; then
+
+            echo "Deployment healthy"
+            printf '%s\n' "$IMAGE_TAG" > last-known-good.txt
+
+            echo "New last-known-good:"
+            cat last-known-good.txt
+
+          else
+
+            echo "Deployment failed"
+            echo "Rolling back to: $PREVIOUS_SHA"
+
+            export IMAGE_TAG="$PREVIOUS_SHA"
+
+            docker compose pull app
+            docker compose up -d --wait --wait-timeout 60
+
+            echo "Rollback completed"
+
+            echo "Running image:"
+            docker inspect devops-prod-app --format '{{.Config.Image}}'
+
+            echo "Health:"
+            docker inspect devops-prod-app --format '{{.State.Health.Status}}'
+
+            exit 1
+          fi
 
       - name: Show application logs
         run: |
