@@ -1,0 +1,17 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, X64]
+    environment: staging
+
+    steps:
+      - name: Deploy application
+        run: |
+          cd /home/torasic/deploy/devops
+          docker compose pull app
+          docker compose up -d
+          docker compose ps
