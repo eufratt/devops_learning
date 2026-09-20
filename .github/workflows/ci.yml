@@ -72,49 +72,67 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deploy with automatic rollback
+      - name: Deploy to staging
         env:
           IMAGE_TAG: ${{ github.sha }}
-        shell: bash
         run: |
           cd /home/torasic/deploy/devops
 
-          PREVIOUS_SHA=$(cat last-known-good.txt)
+          docker compose pull app && \
+          docker compose up -d --wait --wait-timeout 60
 
-          echo "Previous known-good: $PREVIOUS_SHA"
-          echo "Deploying: $IMAGE_TAG"
+          docker compose ps
 
-          if docker compose pull app && \
-             docker compose up -d --wait --wait-timeout 60; then
+          printf '%s\n' "$IMAGE_TAG" > last-known-good.txt
 
-            echo "Deployment healthy"
-            printf '%s\n' "$IMAGE_TAG" > last-known-good.txt
+          echo "Last known good:"
+          cat last-known-good.txt
 
-            echo "New last-known-good:"
-            cat last-known-good.txt
+  rollback:
+    name: Rollback staging
+    if: ${{ !cancelled() && needs.deploy.result == 'failure' }}
+    needs:
+      - test
+      - build
+      - deploy
+    runs-on: [self-hosted, Linux, X64]
+    environment: staging
 
-          else
+    permissions:
+      packages: read
 
-            echo "Deployment failed"
-            echo "Rolling back to: $PREVIOUS_SHA"
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-            export IMAGE_TAG="$PREVIOUS_SHA"
-
-            docker compose pull app
-            docker compose up -d --wait --wait-timeout 60
-
-            echo "Rollback completed"
-
-            echo "Running image:"
-            docker inspect devops-prod-app --format '{{.Config.Image}}'
-
-            echo "Health:"
-            docker inspect devops-prod-app --format '{{.State.Health.Status}}'
-
-            exit 1
-          fi
-
-      - name: Show application logs
+      - name: Read last known good
         run: |
           cd /home/torasic/deploy/devops
-          docker compose logs --tail=20 app
+
+          IMAGE_TAG=$(cat last-known-good.txt)
+
+          echo "Rolling back to:"
+          echo "$IMAGE_TAG"
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      - name: Roll back deployment
+        run: |
+          cd /home/torasic/deploy/devops
+
+          docker compose pull app && \
+          docker compose up -d --wait --wait-timeout 60
+
+      - name: Verify rollback
+        run: |
+          cd /home/torasic/deploy/devops
+
+          echo "Running image:"
+          docker inspect devops-prod-app --format '{{.Config.Image}}'
+
+          echo "Health:"
+          docker inspect devops-prod-app --format '{{.State.Health.Status}}'
