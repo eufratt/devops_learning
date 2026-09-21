@@ -72,21 +72,102 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deploy to staging
+      - name: Blue-green deploy
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          set -euo pipefail
+
           cd /home/torasic/deploy/devops
 
-          docker compose pull app && \
-          docker compose up -d --wait --wait-timeout 60
+          active="$(cat active-color.txt)"
 
-          docker compose ps
+          case "$active" in
+            blue)
+              target="green"
+              old_service="app"
+              target_service="app-green"
+              target_backend="app-green:8080"
+              ;;
+            green)
+              target="blue"
+              old_service="app-green"
+              target_service="app"
+              target_backend="app:8080"
+              ;;
+            *)
+              echo "Invalid active color: $active"
+              exit 1
+              ;;
+          esac
 
+          echo "Active color : $active"
+          echo "Target color : $target"
+          echo "Image SHA    : $IMAGE_TAG"
+
+          export IMAGE_TAG
+
+          echo "Pull target image..."
+          docker compose pull "$target_service"
+
+          echo "Start target..."
+          docker compose up -d \
+            --force-recreate \
+            --wait \
+            --wait-timeout 60 \
+            "$target_service"
+
+          echo "Target health:"
+          docker inspect "$(
+            docker compose ps -q "$target_service"
+          )" --format '{{.State.Health.Status}}'
+
+          echo "Backup current Nginx config..."
+          cp nginx.conf nginx.conf.before-switch
+
+          echo "Switch Nginx to $target..."
+          sed \
+            "s/server app-green:8080;/server ${target_backend};/" \
+            nginx.conf \
+            | sed \
+            "s/server app:8080;/server ${target_backend};/" \
+            > nginx.conf.next
+
+          mv nginx.conf.next nginx.conf
+
+          echo "Validate Nginx..."
+          docker exec devops-prod-proxy nginx -t
+
+          echo "Reload Nginx..."
+          docker exec devops-prod-proxy nginx -s reload
+
+          echo "Verify traffic..."
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            http://127.0.0.1:18080/health
+
+          echo
+
+          echo "Write last-known-good..."
           printf '%s\n' "$IMAGE_TAG" > last-known-good.txt
+
+          echo "Promote active color..."
+          printf '%s\n' "$target" > active-color.txt
+
+          echo "Stop old color..."
+          docker compose stop "$old_service" || \
+            echo "Warning: failed to stop old color $old_service"
+
+          echo "Active color:"
+          cat active-color.txt
 
           echo "Last known good:"
           cat last-known-good.txt
+
+          echo "Running containers:"
+          docker compose ps
 
   rollback:
     name: Rollback staging
@@ -98,41 +179,49 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     environment: staging
 
-    permissions:
-      packages: read
-
     steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Read last known good
+      - name: Restore active color
         run: |
+          set -euo pipefail
+
           cd /home/torasic/deploy/devops
 
-          IMAGE_TAG=$(cat last-known-good.txt)
+          active="$(cat active-color.txt)"
 
-          echo "Rolling back to:"
-          echo "$IMAGE_TAG"
+          case "$active" in
+            blue)
+              backend="app:8080"
+              ;;
+            green)
+              backend="app-green:8080"
+              ;;
+            *)
+              echo "Invalid active color: $active"
+              exit 1
+              ;;
+          esac
 
-          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "Restoring traffic to: $active"
 
-      - name: Roll back deployment
-        run: |
-          cd /home/torasic/deploy/devops
+          cp nginx.conf nginx.conf.failed-deploy
 
-          docker compose pull app && \
-          docker compose up -d --wait --wait-timeout 60
+          sed \
+            "s/server app-green:8080;/server ${backend};/" \
+            nginx.conf \
+            | sed \
+            "s/server app:8080;/server ${backend};/" \
+            > nginx.conf.rollback
 
-      - name: Verify rollback
-        run: |
-          cd /home/torasic/deploy/devops
+          mv nginx.conf.rollback nginx.conf
 
-          echo "Running image:"
-          docker inspect devops-prod-app --format '{{.Config.Image}}'
+          docker exec devops-prod-proxy nginx -t
+          docker exec devops-prod-proxy nginx -s reload
 
-          echo "Health:"
-          docker inspect devops-prod-app --format '{{.State.Health.Status}}'
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            http://127.0.0.1:18080/health
+
+          echo
+          echo "Traffic restored to $active"
