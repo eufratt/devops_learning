@@ -135,11 +135,11 @@ jobs:
 
           mv nginx.conf.next nginx.conf
 
+          echo "Recreate Nginx proxy..."
+          docker compose up -d --force-recreate proxy
+
           echo "Validate Nginx..."
           docker exec devops-prod-proxy nginx -t
-
-          echo "Reload Nginx..."
-          docker exec devops-prod-proxy nginx -s reload
 
           echo "Verify traffic..."
 
@@ -162,8 +162,6 @@ jobs:
               exit 1
             fi
           done
-
-          echo
 
           echo "Write last-known-good..."
           printf '%s\n' "$IMAGE_TAG" > last-known-good.txt
@@ -229,14 +227,26 @@ jobs:
 
           mv nginx.conf.rollback nginx.conf
 
+          docker compose up -d --force-recreate proxy
+
           docker exec devops-prod-proxy nginx -t
-          docker exec devops-prod-proxy nginx -s reload
 
-          curl \
-            --fail \
-            --silent \
-            --show-error \
-            http://127.0.0.1:18080/health
+          for i in $(seq 1 10); do
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              http://127.0.0.1:18080/health; then
+              echo
+              echo "Traffic restored successfully"
+              break
+            fi
 
-          echo
-          echo "Traffic restored to $active"
+            echo "Rollback health check attempt $i failed, retrying..."
+            sleep 2
+
+            if [ "$i" -eq 10 ]; then
+              echo "Rollback verification failed"
+              exit 1
+            fi
+          done
