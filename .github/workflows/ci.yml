@@ -142,11 +142,26 @@ jobs:
           docker exec devops-prod-proxy nginx -s reload
 
           echo "Verify traffic..."
-          curl \
-            --fail \
-            --silent \
-            --show-error \
-            http://127.0.0.1:18080/health
+
+          for i in $(seq 1 10); do
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              http://127.0.0.1:18080/health; then
+              echo
+              echo "Traffic verification successful"
+              break
+            fi
+
+            echo "Health check attempt $i failed, retrying..."
+            sleep 2
+
+            if [ "$i" -eq 10 ]; then
+              echo "Traffic verification failed"
+              exit 1
+            fi
+          done
 
           echo
 
